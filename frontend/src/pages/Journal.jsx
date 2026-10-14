@@ -22,6 +22,7 @@ import Navbar from "../components/Navbar/Navbar";
 import {
   getJournals,
   createJournal,
+  createVoiceJournal,
   deleteJournal,
   transcribeJournalAudio,
 } from "../services/journalService";
@@ -48,9 +49,16 @@ function formatEmotionPercent(probability) {
 }
 
 function displayEmotionLabel(emotion) {
+  if (emotion === "mixed") return "Mixed emotional signals";
   if (!emotion || emotion === "neutral") return "Neutral";
 
   return emotion.charAt(0).toUpperCase() + emotion.slice(1);
+}
+
+function displayMismatchLabel(category) {
+  if (!category) return "Unavailable";
+
+  return category.charAt(0).toUpperCase() + category.slice(1);
 }
 
 function formatRiskPercent(score) {
@@ -121,6 +129,7 @@ function JournalPage() {
 
   const [voiceStatus, setVoiceStatus] = useState("idle");
   const [voiceError, setVoiceError] = useState("");
+  const [voiceAudioBlob, setVoiceAudioBlob] = useState(null);
   const [entryLanguage, setEntryLanguage] = useState("en");
   const [showTranslatedJournal, setShowTranslatedJournal] = useState(false);
 
@@ -208,17 +217,25 @@ function JournalPage() {
     setSuccess(false);
 
     try {
-      const created = await createJournal({
+      const payload = {
         title: form.title.trim(),
         content: form.content.trim(),
         originalLanguage: entryLanguage,
-      });
+      };
+
+      const created = voiceAudioBlob
+        ? await createVoiceJournal({
+            ...payload,
+            audioBlob: voiceAudioBlob,
+          })
+        : await createJournal(payload);
 
       const newEntry = created?.journal || created;
 
       setJournals((prev) => [newEntry, ...prev]);
       setForm({ title: "", content: "" });
       setEntryLanguage("en");
+      setVoiceAudioBlob(null);
       setSuccess(true);
 
       window.setTimeout(() => setSuccess(false), 3000);
@@ -281,6 +298,7 @@ function JournalPage() {
         ...prev,
         content: appendTranscript(prev.content, text),
       }));
+      setVoiceAudioBlob(audioBlob);
 
       setVoiceStatus("success");
 
@@ -506,6 +524,17 @@ function JournalPage() {
     activeRiskAnalysis?.risk_score
   );
 
+  const activeMultimodalAnalysis =
+    activeJournal?.multimodal_analysis &&
+    typeof activeJournal.multimodal_analysis === "object"
+      ? activeJournal.multimodal_analysis
+      : null;
+
+  const activeFusion = activeMultimodalAnalysis?.fusion || null;
+  const activeMismatch = activeMultimodalAnalysis?.mismatch || null;
+  const activeVoiceEmotion = activeMultimodalAnalysis?.voiceEmotion || null;
+  const activeTextEmotion = activeMultimodalAnalysis?.textEmotion || null;
+
   const activeOriginalLanguage =
     activeJournal?.original_language || "en";
   const activeLanguageMeta =
@@ -700,6 +729,7 @@ function JournalPage() {
                         setForm({ title: "", content: "" });
                         setEntryLanguage("en");
                         setVoiceError("");
+                        setVoiceAudioBlob(null);
                       }}
                       disabled={submitting || isVoiceBusy}
                     >
@@ -1078,6 +1108,76 @@ function JournalPage() {
                       </p>
                     </div>
                   )}
+                </footer>
+              )}
+
+              {activeMultimodalAnalysis && (
+                <footer className="journal-modal-footer journal-voice-analysis-footer">
+                  <div className="journal-analysis-header">
+                    <Mic size={14} />
+                    <h4>Voice Mood Signals</h4>
+                  </div>
+
+                  <div className="journal-analysis-grid journal-voice-analysis-grid">
+                    <div className="analysis-item">
+                      <span>Overall mood</span>
+
+                      <strong>
+                        {displayEmotionLabel(
+                          activeFusion?.finalMood ||
+                            activeJournal.emotion
+                        )}
+                      </strong>
+                    </div>
+
+                    <div className="analysis-item">
+                      <span>Text emotion</span>
+
+                      <strong>
+                        {displayEmotionLabel(
+                          activeTextEmotion?.dominant
+                        )}
+                      </strong>
+                    </div>
+
+                    <div className="analysis-item">
+                      <span>Voice tone</span>
+
+                      <strong>
+                        {activeVoiceEmotion
+                          ? displayEmotionLabel(
+                              activeVoiceEmotion.commonEmotion
+                            )
+                          : "Unavailable"}
+                      </strong>
+                    </div>
+
+                    <div className="analysis-item">
+                      <span>Emotional mismatch</span>
+
+                      <strong>
+                        {displayMismatchLabel(
+                          activeMismatch?.category
+                        )}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {activeMultimodalAnalysis.voiceEmotionError && (
+                    <p className="journal-analysis-secondary-empty">
+                      Speech emotion analysis was unavailable, so
+                      this entry used the text mood signal.
+                    </p>
+                  )}
+
+                  {activeMultimodalAnalysis.speechEmotionLanguageNote &&
+                    activeOriginalLanguage !== "en" && (
+                      <p className="journal-risk-disclaimer">
+                        Voice tone analysis uses the original
+                        acoustic signal and may be less reliable for
+                        {` ${activeLanguageMeta.label}`}.
+                      </p>
+                    )}
                 </footer>
               )}
 
